@@ -1,0 +1,16 @@
+# ===== 本地构建产物 =====
+/build/
+build/
+*.apk
+app/release/
+
+# ===== 本地签名私钥：切勿提交！由 build.sh 在本地自动生成 =====
+ts.keystore
+
+# ===== 已废弃依赖：v8 起移除 Shizuku，无需入库 =====
+libs/
+
+# ===== IDE / OS 杂项 =====
+.idea/
+*.iml
+.DS_Store

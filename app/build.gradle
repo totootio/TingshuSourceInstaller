@@ -1,0 +1,31 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'top.totootao.tingshu.installer'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'top.totootao.tingshu.installer'
+        minSdk 26
+        // 故意固定在 29：Android 11 的 SAF「Android/data 目录限制」
+        // 官方文档明确仅对 targetSdk >= 30 的应用生效。
+        targetSdk 29
+        versionCode 1
+        versionName '1.0'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}
+
+// 无第三方依赖：全部使用 DocumentsContract / ContentResolver 原生 API
