@@ -39,7 +39,7 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * 听书源导入器 v10 —— 重做界面，三步引导式操作。
+ * 听书源导入器 v11 —— 支持批量（多个 jar）导入，三步引导式操作。
  *
  * 依据（lbchs5343/Android-FileExplorerDemo，2024-05-18 更新）：
  *   Android 13/14 上可用零宽字符插入 docId 来直接授权 Android/data。
@@ -51,9 +51,9 @@ import java.util.Locale;
  *
  * 通道：
  *   0. ContentResolver 直连 ExternalStorageProvider（无需任何授权框）
- *   1. 真实路径 File API 直写（修掉 v8「先判目录、失败就放弃、根本没试写文件」的 bug）
+ *   1. 真实路径 File API 直写
  *   2. SAF tree URI 写入（零宽 docId 授权后，由系统 provider 代劳 create）
- *   3. 零宽路径 File API 兜底（修掉 v8 判断条件写错的 bug）
+ *   3. 零宽路径 File API 兜底
  *
  * 不依赖 Shizuku / root / 开发者选项 / 无线调试；不自动重启进程（v8.0 白屏原因）。
  */
@@ -61,7 +61,7 @@ public class MainActivity extends Activity {
 
     private static final String PREF = "ts9";
     private static final String KEY_TREE = "tree_uri";
-    private static final String KEY_JAR = "jar_uri";
+    private static final String KEY_JARS = "jar_uris";        // 多行：每行一个 content uri
     private static final String KEY_SAF_IDX = "saf_idx";
 
     private static final String TARGET_PKG = "com.github.eprendre.tingshu";
@@ -74,8 +74,9 @@ public class MainActivity extends Activity {
     private static final int CODE_ALLFILES = 1;
     private static final int CODE_TREE = 2;
     private static final int CODE_PICK = 3;
-    private static final int CODE_LOG = 4;
-    private static final int CODE_REFRESH = 5;
+    private static final int CODE_IMPORT = 4;
+    private static final int CODE_LOG = 5;
+    private static final int CODE_REFRESH = 6;
 
     private static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT;
     private static final int WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
@@ -116,23 +117,24 @@ public class MainActivity extends Activity {
     private ProgressBar progressBar;
     private TextView targetView;
     private TextView step1Badge, step2Badge, step3Badge;
-    private Button step1Btn, step2Btn, step3Btn;
+    private Button step1Btn, step2Btn, step3Btn, importBtn;
+    private TextView selectedView;
+    private EditText prefixEdit;
     private TextView logView;
     private ScrollView logScroll;
     private LinearLayout logContainer;
     private TextView logHeader;
-    private EditText nameEdit;
     private final StringBuilder logBuf = new StringBuilder();
     private final SimpleDateFormat fmt = new SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault());
     private volatile boolean busy = false;
     private boolean suppressAuto = false;
     private volatile String lastSafDocId = null;
-    private String cachedName = "sources_by_custom.jar";
 
     // 引导状态
     private boolean afOk = false;
     private boolean treeOk = false;
-    private boolean jarOk = false;
+    private final List<Uri> selectedUris = new ArrayList<Uri>();
+    private final List<String> selectedNames = new ArrayList<String>();
 
     // ---------------------------------------------------------------- lifecycle
 
@@ -141,18 +143,19 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         prefs = getSharedPreferences(PREF, Context.MODE_PRIVATE);
         setContentView(buildUi());
+        restoreSelected();
         refreshStateFlags();
 
-        log("=== 听书源导入器 v10.0（最简三步引导）===");
+        log("=== 听书源导入器 v11.0（支持批量导入多个 jar）===");
         log("设备: " + Build.MANUFACTURER + " " + Build.MODEL
                 + " / Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")");
         log("目标: /storage/emulated/0/" + REL + "/");
         log("");
-        log("绝大多数机型：① 开权限 → ② 授权 → ③ 选 jar，即可导入。");
-        log("② 用「零宽字符 docId」打开选择器，系统不会把它识别成 Android/data，按钮可点。");
+        log("第③步支持多选：一次选多个 jar，统一导入到 jars 目录（各自保留原文件名）。");
         log("不需要 Shizuku / root / 开发者选项 / 无线调试，也不会自动重启。");
         cleanupPendingRestart();
         updateSteps();
+        updateSelectedView();
     }
 
     @Override
@@ -181,7 +184,30 @@ public class MainActivity extends Activity {
     private void refreshStateFlags() {
         afOk = hasAllFiles();
         treeOk = savedTree() != null;
-        jarOk = prefs.getString(KEY_JAR, null) != null;
+    }
+
+    /** 从持久化（多行 uri）恢复已选文件列表 */
+    private void restoreSelected() {
+        selectedUris.clear();
+        selectedNames.clear();
+        String s = prefs.getString(KEY_JARS, null);
+        if (s == null || s.isEmpty()) return;
+        for (String line : s.split("\n")) {
+            line = line.trim();
+            if (line.isEmpty()) continue;
+            try {
+                Uri u = Uri.parse(line);
+                selectedUris.add(u);
+                selectedNames.add(queryName(u));
+            } catch (Throwable ignored) { }
+        }
+    }
+
+    /** 把已选 uri 列表持久化为多行字符串 */
+    private void persistSelected() {
+        StringBuilder sb = new StringBuilder();
+        for (Uri u : selectedUris) sb.append(u.toString()).append('\n');
+        prefs.edit().putString(KEY_JARS, sb.toString()).apply();
     }
 
     // ---------------------------------------------------------------- UI
@@ -204,7 +230,7 @@ public class MainActivity extends Activity {
         title.setTextColor(C_TITLE);
         root.addView(title);
         TextView subtitle = new TextView(this);
-        subtitle.setText("把 jar 听书源导入「我的听书」");
+        subtitle.setText("把 jar 听书源导入「我的听书」（支持批量）");
         subtitle.setTextSize(12);
         subtitle.setTextColor(C_SUB);
         subtitle.setPadding(0, dp(2), 0, dp(6));
@@ -265,26 +291,45 @@ public class MainActivity extends Activity {
         addHint(s2, "选择器里选 Android/data，点「使用此文件夹」→「允许」。若仍灰，返回再点一次会自动换下一个变体。");
         root.addView(s2);
 
-        // 步骤三：选择并导入（重点突出）
+        // 步骤三：选择并导入（重点突出，支持多选）
         LinearLayout s3 = card();
         s3.setBackgroundColor(C_TEAL_BG);
         LinearLayout s3row = new LinearLayout(this); s3row.setOrientation(HORIZONTAL);
-        TextView s3t = stepTitle("③ 选择 jar 并导入");
+        TextView s3t = stepTitle("③ 选择 jar（可多选）并导入");
         step3Badge = badge("待选择");
         s3row.addView(s3t); s3row.addView(step3Badge);
-        step3Btn = primaryButton("选择 jar 文件", CODE_PICK, true);
-        s3.addView(s3row); s3.addView(step3Btn);
-        TextView nameLabel = new TextView(this);
-        nameLabel.setText("导入后的文件名（选完自动填入，可改）");
-        nameLabel.setTextSize(11); nameLabel.setTextColor(C_SUB);
-        nameLabel.setPadding(0, dp(8), 0, dp(2));
-        s3.addView(nameLabel);
-        nameEdit = new EditText(this);
-        nameEdit.setText(cachedName);
-        nameEdit.setInputType(InputType.TYPE_CLASS_TEXT);
-        nameEdit.setTextSize(14);
-        s3.addView(nameEdit);
-        addHint(s3, "选完 jar 会自动写入目标目录。成功请彻底重启「我的听书」让它扫描 jars/。");
+        s3.addView(s3row);
+
+        LinearLayout btnRow = new LinearLayout(this); btnRow.setOrientation(HORIZONTAL);
+        step3Btn = primaryButton("选择 jar 文件（可多选）", CODE_PICK, true);
+        LinearLayout.LayoutParams b1 = new LinearLayout.LayoutParams(0, WRAP, 1f);
+        step3Btn.setLayoutParams(b1);
+        importBtn = primaryButton("导入", CODE_IMPORT, true);
+        LinearLayout.LayoutParams b2 = new LinearLayout.LayoutParams(0, WRAP, 1f);
+        b2.leftMargin = dp(8);
+        importBtn.setLayoutParams(b2);
+        btnRow.addView(step3Btn);
+        btnRow.addView(importBtn);
+        s3.addView(btnRow);
+
+        selectedView = new TextView(this);
+        selectedView.setTextSize(12);
+        selectedView.setTextColor(C_TEXT);
+        selectedView.setTypeface(Typeface.MONOSPACE);
+        selectedView.setPadding(0, dp(6), 0, dp(2));
+        s3.addView(selectedView);
+
+        TextView prefixLabel = new TextView(this);
+        prefixLabel.setText("文件名前缀（可选，留空则用原名；多个文件会加前缀便于区分）");
+        prefixLabel.setTextSize(11); prefixLabel.setTextColor(C_SUB);
+        prefixLabel.setPadding(0, dp(6), 0, dp(2));
+        s3.addView(prefixLabel);
+        prefixEdit = new EditText(this);
+        prefixEdit.setHint("例如 book_  →  得到 book_xxx.jar");
+        prefixEdit.setInputType(InputType.TYPE_CLASS_TEXT);
+        prefixEdit.setTextSize(14);
+        s3.addView(prefixEdit);
+        addHint(s3, "选完多个 jar 后点「导入」统一写入。成功请彻底重启「我的听书」让它扫描 jars/。");
         root.addView(s3);
 
         // 次级按钮行
@@ -385,7 +430,7 @@ public class MainActivity extends Activity {
         b.setPadding(dp(10), dp(4), dp(10), dp(4));
         b.setBackgroundColor(strong ? C_TEAL : C_BLUE);
         b.setTextColor(Color.WHITE);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(MATCH, WRAP);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(WRAP, WRAP);
         lp.topMargin = dp(8);
         b.setLayoutParams(lp);
         b.setOnClickListener(new View.OnClickListener() {
@@ -416,20 +461,44 @@ public class MainActivity extends Activity {
                 if (treeOk) setBadge(step2Badge, "✓ 已授权", C_GREEN);
                 else if (afOk) setBadge(step2Badge, "需要授权", C_ORANGE);
                 else setBadge(step2Badge, "先开①", C_GRAY);
-                setBadge(step3Badge, jarOk ? "✓ 已选" : "待选择",
-                        jarOk ? C_GREEN : C_GRAY);
+                int n = selectedUris.size();
+                setBadge(step3Badge, n > 0 ? "✓ 已选 " + n + " 个" : "待选择",
+                        n > 0 ? C_GREEN : C_GRAY);
+            }
+        });
+    }
+
+    private void updateSelectedView() {
+        final int n = selectedUris.size();
+        runOnUiThread(new Runnable() {
+            @Override public void run() {
+                if (n == 0) {
+                    selectedView.setText("尚未选择文件（可多选）");
+                } else {
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("已选 ").append(n).append(" 个源：\n");
+                    int m = Math.min(n, 8);
+                    for (int i = 0; i < m; i++) {
+                        String nm = selectedNames.get(i);
+                        sb.append("  • ").append(nm == null ? selectedUris.get(i).toString() : nm).append('\n');
+                    }
+                    if (n > m) sb.append("  … 等 ").append(n).append(" 个\n");
+                    selectedView.setText(sb.toString());
+                }
+                int cnt = selectedUris.size();
+                importBtn.setText(cnt > 0 ? "导入 " + cnt + " 个 jar" : "导入");
+                importBtn.setEnabled(cnt > 0 && !busy);
             }
         });
     }
 
     private void dispatch(final int code) {
         if (busy && code != CODE_LOG && code != CODE_REFRESH) { toast("正在执行，请稍候"); return; }
-        cachedName = nameEdit.getText().toString().trim();
-        if (cachedName.length() == 0) cachedName = "sources_by_custom.jar";
         switch (code) {
             case CODE_ALLFILES: openAllFilesSettings(); break;
             case CODE_TREE:     requestTree(); break;
             case CODE_PICK:     pickJar(); break;
+            case CODE_IMPORT:   run(new Runnable() { @Override public void run() { doImportAll(); } }); break;
             case CODE_REFRESH:  run(new Runnable() { @Override public void run() { auto(); } }); break;
             case CODE_LOG:
                 ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
@@ -480,11 +549,13 @@ public class MainActivity extends Activity {
         catch (Throwable t) { log("!! 无法打开选择器: " + t); }
     }
 
+    /** 多选 jar：开启 EXTRA_ALLOW_MULTIPLE，返回 ClipData（多个）或单个 uri */
     private void pickJar() {
         suppressAuto = true;
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("*/*");
+        i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
                 | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         try { startActivityForResult(i, REQ_JAR); }
@@ -515,24 +586,43 @@ public class MainActivity extends Activity {
             return;
         }
         if (req == REQ_JAR) {
-            if (result != Activity.RESULT_OK || data == null || data.getData() == null) {
+            if (result != Activity.RESULT_OK || data == null) {
                 log("!! 未选择 jar");
                 return;
             }
-            Uri u = data.getData();
-            try {
-                getContentResolver().takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            } catch (Throwable ignored) { }
-            prefs.edit().putString(KEY_JAR, u.toString()).apply();
-            String n = queryName(u);
-            if (n != null && n.toLowerCase(Locale.US).endsWith(".jar")) {
-                cachedName = n;
-                nameEdit.setText(n);
+            selectedUris.clear();
+            selectedNames.clear();
+            ClipData cd = data.getClipData();
+            if (cd != null && cd.getItemCount() > 0) {
+                for (int i = 0; i < cd.getItemCount(); i++) {
+                    Uri u = cd.getItemAt(i).getUri();
+                    if (u == null) continue;
+                    try {
+                        getContentResolver().takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    } catch (Throwable ignored) { }
+                    selectedUris.add(u);
+                    selectedNames.add(queryName(u));
+                }
+            } else if (data.getData() != null) {
+                Uri u = data.getData();
+                try {
+                    getContentResolver().takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                } catch (Throwable ignored) { }
+                selectedUris.add(u);
+                selectedNames.add(queryName(u));
             }
-            jarOk = true;
-            log("已选择 jar: " + (n == null ? u.toString() : n));
+            if (selectedUris.isEmpty()) {
+                log("!! 未选择任何 jar");
+                updateSelectedView();
+                updateSteps();
+                return;
+            }
+            persistSelected();
+            log("已选择 " + selectedUris.size() + " 个 jar：");
+            for (int i = 0; i < selectedNames.size(); i++)
+                log("  • " + (selectedNames.get(i) == null ? selectedUris.get(i).toString() : selectedNames.get(i)));
+            updateSelectedView();
             updateSteps();
-            run(new Runnable() { @Override public void run() { doImport(); } });
         }
     }
 
@@ -592,7 +682,10 @@ public class MainActivity extends Activity {
 
     private void setBusy(final boolean b) {
         runOnUiThread(new Runnable() {
-            @Override public void run() { progressBar.setVisibility(b ? View.VISIBLE : View.GONE); }
+            @Override public void run() {
+                progressBar.setVisibility(b ? View.VISIBLE : View.GONE);
+                importBtn.setEnabled(b ? false : selectedUris.size() > 0);
+            }
         });
     }
 
@@ -884,50 +977,75 @@ public class MainActivity extends Activity {
         updateSteps();
     }
 
-    private void doImport() {
+    /** 依次尝试三条通道写入单个文件，返回通道名或 null */
+    private String tryWrite(byte[] data, String name) {
+        String e1 = writeFile(data, name);
+        if (e1 == null) return "真实路径直写";
+        log("  通道1 失败: " + e1);
+        Uri tree = savedTree();
+        if (tree != null) {
+            String e2 = writeSaf(tree, data, name);
+            if (e2 == null) return "目录授权 (SAF)";
+            log("  通道2 失败: " + e2);
+        } else {
+            log("  通道2 跳过: 未授权目录（点②）");
+        }
+        String e3 = writeZeroWidth(data, name);
+        if (e3 == null) return "零宽路径";
+        log("  通道3 失败: " + e3);
+        return null;
+    }
+
+    /** 批量导入：逐个读取已选 jar，写入目标目录，统计成功/失败 */
+    private void doImportAll() {
         setStatus("正在导入…", 0);
         log("");
-        log("=== 开始导入 ===");
-        try {
-            String jarStr = prefs.getString(KEY_JAR, null);
-            if (jarStr == null) throw new Exception("尚未选择 jar，请先点③");
-            InputStream in = getContentResolver().openInputStream(Uri.parse(jarStr));
-            if (in == null) throw new Exception("无法读取源 jar，请重新点③选择");
-            byte[] data = readAll(in);
-            if (data.length == 0) throw new Exception("源 jar 为空");
-            log("源 jar: " + data.length + " 字节 → " + cachedName);
-
-            String channel = null;
-            String e1 = writeFile(data, cachedName);
-            if (e1 == null) {
-                channel = "真实路径直写";
-            } else {
-                log("  通道1 失败: " + e1);
-                Uri tree = savedTree();
-                if (tree != null) {
-                    String e2 = writeSaf(tree, data, cachedName);
-                    if (e2 == null) channel = "目录授权 (SAF)";
-                    else log("  通道2 失败: " + e2);
-                } else {
-                    log("  通道2 跳过: 未授权目录（点②）");
-                }
-                if (channel == null) {
-                    String e3 = writeZeroWidth(data, cachedName);
-                    if (e3 == null) channel = "零宽路径";
-                    else log("  通道3 失败: " + e3);
-                }
+        log("=== 开始批量导入 ===");
+        if (selectedUris.isEmpty()) {
+            log("!! 尚未选择 jar，请先点③选择");
+            setStatus("✗ 未选择文件", 2);
+            return;
+        }
+        String prefix = prefixEdit.getText().toString().trim();
+        int n = selectedUris.size();
+        int ok = 0, fail = 0;
+        for (int i = 0; i < n; i++) {
+            Uri u = selectedUris.get(i);
+            String base = selectedNames.get(i);
+            if (base == null || base.isEmpty()) base = "source_" + (i + 1) + ".jar";
+            String target = prefix.isEmpty() ? base : (prefix + base);
+            if (!target.toLowerCase(Locale.US).endsWith(".jar")) target = target + ".jar";
+            log("[" + (i + 1) + "/" + n + "] " + base + " → " + target);
+            byte[] data;
+            try {
+                InputStream in = getContentResolver().openInputStream(u);
+                if (in == null) throw new Exception("无法读取源 jar");
+                data = readAll(in);
+                if (data.length == 0) throw new Exception("源 jar 为空");
+            } catch (Throwable t) {
+                fail++;
+                log("  ✗ 读取失败: " + t.getClass().getSimpleName() + ": " + t.getMessage());
+                continue;
             }
-
-            if (channel == null) throw new Exception("三条通道均失败，请先点②完成授权，再看诊断日志");
-            log("");
-            log("✓ 导入完成  通道: " + channel);
-            log("  目标: /storage/emulated/0/" + REL + "/" + cachedName);
+            String channel = tryWrite(data, target);
+            if (channel != null) {
+                ok++;
+                log("  ✓ 通道: " + channel);
+            } else {
+                fail++;
+                log("  ✗ 写入失败: 三条通道均失败");
+            }
+        }
+        log("");
+        log("=== 完成：成功 " + ok + " / 失败 " + fail + " （共 " + n + "）===");
+        if (fail == 0) {
             log("请彻底清后台重启『我的听书』，让它扫描 jars/ 加载新源。");
-            setStatus("✓ 导入成功，请重启『我的听书』", 1);
-            toast("导入成功，请重启「我的听书」");
-        } catch (Throwable t) {
-            log("!! 导入失败: " + t.getClass().getSimpleName() + ": " + t.getMessage());
-            setStatus("✗ 导入失败，见日志", 2);
+            setStatus("✓ 导入 " + ok + " 个成功，请重启『我的听书』", 1);
+            toast("导入成功 " + ok + " 个，请重启「我的听书」");
+        } else if (ok > 0) {
+            setStatus("⚠ 部分成功：" + ok + " 成功 / " + fail + " 失败", 3);
+        } else {
+            setStatus("✗ 全部失败，见日志", 2);
         }
     }
 
@@ -935,8 +1053,8 @@ public class MainActivity extends Activity {
         ByteArrayOutputStream bo = new ByteArrayOutputStream();
         try {
             byte[] b = new byte[16384];
-            int n;
-            while ((n = in.read(b)) > 0) bo.write(b, 0, n);
+            int nn;
+            while ((nn = in.read(b)) > 0) bo.write(b, 0, nn);
         } finally { try { in.close(); } catch (Throwable ignored) { } }
         return bo.toByteArray();
     }

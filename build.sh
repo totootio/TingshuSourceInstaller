@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 手动构建脚本（不依赖 Gradle / Android Studio）
 # Ubuntu 22.04 + JDK 20 + build-tools 34.0.0 + platform android-34
-# v8.1: 回到纯 framework API，去掉全部 Shizuku 依赖；移除自动重启以修复白屏
+# v11: 支持批量（多个 jar）导入；第③步文件选择器开启 EXTRA_ALLOW_MULTIPLE
 set -euo pipefail
 
 ANDK="${ANDK:-/root/.codebuddy/artifact/2f8a7d30-9c21-4f0b-1d64-8ca96f81b000/andk}"
@@ -27,7 +27,7 @@ sed "s/android:targetSdkVersion=\"[0-9]*\"/android:targetSdkVersion=\"$TARGET_SD
   -I "$ANDROID_JAR" \
   --manifest "$OUT/AndroidManifest.xml" \
   --min-sdk-version 26 --target-sdk-version "$TARGET_SDK" \
-  --version-code 11 --version-name 10.0 \
+  --version-code 12 --version-name 11.0 \
   --java "$OUT/gen"
 
 echo "[2/7] javac 编译 Java 源码（仅 framework API）"
