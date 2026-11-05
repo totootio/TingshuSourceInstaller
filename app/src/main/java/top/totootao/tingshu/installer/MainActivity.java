@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -22,7 +23,6 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -114,7 +114,6 @@ public class MainActivity extends Activity {
 
     private SharedPreferences prefs;
     private TextView statusView;
-    private ProgressBar progressBar;
     private TextView targetView;
     private TextView step1Badge, step2Badge, step3Badge;
     private Button step1Btn, step2Btn, step3Btn, importBtn;
@@ -146,7 +145,7 @@ public class MainActivity extends Activity {
         restoreSelected();
         refreshStateFlags();
 
-        log("=== 听书源导入器 v11.0（支持批量导入多个 jar）===");
+        log("=== 听书源导入器 v12.0（批量导入 + 重做按钮 + 新图标）===");
         log("设备: " + Build.MANUFACTURER + " " + Build.MODEL
                 + " / Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")");
         log("目标: /storage/emulated/0/" + REL + "/");
@@ -247,14 +246,6 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(MATCH, WRAP);
         root.addView(statusView, slp);
 
-        // 进度条
-        progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progressBar.setIndeterminate(true);
-        progressBar.setVisibility(View.GONE);
-        LinearLayout.LayoutParams pblp = new LinearLayout.LayoutParams(MATCH, WRAP);
-        pblp.topMargin = dp(6);
-        root.addView(progressBar, pblp);
-
         // 目标目录卡
         LinearLayout targetCard = card();
         TextView tlabel = new TextView(this);
@@ -275,7 +266,7 @@ public class MainActivity extends Activity {
         TextView s1t = stepTitle("① 所有文件访问权限");
         step1Badge = badge("请开启");
         s1row.addView(s1t); s1row.addView(step1Badge);
-        step1Btn = primaryButton("去开启权限", CODE_ALLFILES, false);
+        step1Btn = primaryButton("去开启权限", CODE_ALLFILES, C_BLUE);
         s1.addView(s1row); s1.addView(step1Btn);
         addHint(s1, "设置里打开「所有文件访问权限」开关后返回即可。");
         root.addView(s1);
@@ -286,7 +277,7 @@ public class MainActivity extends Activity {
         TextView s2t = stepTitle("② 授权 Android/data");
         step2Badge = badge("待授权");
         s2row.addView(s2t); s2row.addView(step2Badge);
-        step2Btn = primaryButton("一键授权（灰了就再点换变体）", CODE_TREE, false);
+        step2Btn = primaryButton("一键授权（灰了就再点换变体）", CODE_TREE, C_BLUE);
         s2.addView(s2row); s2.addView(step2Btn);
         addHint(s2, "选择器里选 Android/data，点「使用此文件夹」→「允许」。若仍灰，返回再点一次会自动换下一个变体。");
         root.addView(s2);
@@ -300,17 +291,10 @@ public class MainActivity extends Activity {
         s3row.addView(s3t); s3row.addView(step3Badge);
         s3.addView(s3row);
 
-        LinearLayout btnRow = new LinearLayout(this); btnRow.setOrientation(HORIZONTAL);
-        step3Btn = primaryButton("选择 jar 文件（可多选）", CODE_PICK, true);
-        LinearLayout.LayoutParams b1 = new LinearLayout.LayoutParams(0, WRAP, 1f);
-        step3Btn.setLayoutParams(b1);
-        importBtn = primaryButton("导入", CODE_IMPORT, true);
-        LinearLayout.LayoutParams b2 = new LinearLayout.LayoutParams(0, WRAP, 1f);
-        b2.leftMargin = dp(8);
-        importBtn.setLayoutParams(b2);
-        btnRow.addView(step3Btn);
-        btnRow.addView(importBtn);
-        s3.addView(btnRow);
+        step3Btn = primaryButton("＋ 选择 jar 文件（可多选）", CODE_PICK, C_TEAL);
+        s3.addView(step3Btn);
+        importBtn = primaryButton("⬇ 导入 jar", CODE_IMPORT, C_GREEN);
+        s3.addView(importBtn);
 
         selectedView = new TextView(this);
         selectedView.setTextSize(12);
@@ -421,16 +405,23 @@ public class MainActivity extends Activity {
         card.addView(h);
     }
 
-    private Button primaryButton(String text, final int code, boolean strong) {
-        Button b = new Button(this);
+    /** 全宽圆角按钮：bgColor 指定底色，文字居中白字 */
+    private Button primaryButton(String text, final int code, int bgColor) {
+        Button b = new Button(this, null, android.R.attr.buttonStyle);
         b.setText(text);
         b.setAllCaps(false);
-        b.setTextSize(strong ? 16 : 14);
-        b.setMinHeight(dp(48));
-        b.setPadding(dp(10), dp(4), dp(10), dp(4));
-        b.setBackgroundColor(strong ? C_TEAL : C_BLUE);
+        b.setTextSize(15);
+        b.setMinHeight(dp(50));
+        b.setMinimumWidth(MATCH);
+        b.setPadding(dp(12), dp(12), dp(12), dp(12));
+        b.setGravity(Gravity.CENTER);
         b.setTextColor(Color.WHITE);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(WRAP, WRAP);
+        b.setTypeface(Typeface.defaultFromStyle(Typeface.BOLD));
+        GradientDrawable gd = new GradientDrawable();
+        gd.setColor(bgColor);
+        gd.setCornerRadius(dp(12));
+        b.setBackground(gd);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(MATCH, WRAP);
         lp.topMargin = dp(8);
         b.setLayoutParams(lp);
         b.setOnClickListener(new View.OnClickListener() {
@@ -486,7 +477,7 @@ public class MainActivity extends Activity {
                     selectedView.setText(sb.toString());
                 }
                 int cnt = selectedUris.size();
-                importBtn.setText(cnt > 0 ? "导入 " + cnt + " 个 jar" : "导入");
+                importBtn.setText(cnt > 0 ? "⬇ 导入 " + cnt + " 个 jar" : "⬇ 导入 jar");
                 importBtn.setEnabled(cnt > 0 && !busy);
             }
         });
@@ -683,7 +674,6 @@ public class MainActivity extends Activity {
     private void setBusy(final boolean b) {
         runOnUiThread(new Runnable() {
             @Override public void run() {
-                progressBar.setVisibility(b ? View.VISIBLE : View.GONE);
                 importBtn.setEnabled(b ? false : selectedUris.size() > 0);
             }
         });
