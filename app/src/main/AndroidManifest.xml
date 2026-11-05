@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="top.totootao.tingshu.installer"
-    android:versionCode="13"
-    android:versionName="12.0">
+    android:versionCode="14"
+    android:versionName="12.1">
 
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="29" />
 
@@ -13,7 +13,7 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <application
-        android:label="听书源导入器 v12"
+        android:label="听书源导入器 v12.1"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:allowBackup="true"

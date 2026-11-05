@@ -34,7 +34,7 @@ sed "s/android:targetSdkVersion=\"[0-9]*\"/android:targetSdkVersion=\"$TARGET_SD
   $(find "$OUT/res_flat" -name '*.flat') \
   --manifest "$OUT/AndroidManifest.xml" \
   --min-sdk-version 26 --target-sdk-version "$TARGET_SDK" \
-  --version-code 13 --version-name 12.0 \
+  --version-code 14 --version-name 12.1 \
   --java "$OUT/gen"
 
 echo "[3/8] javac 编译 Java 源码（仅 framework API）"

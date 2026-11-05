@@ -16,12 +16,10 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.DocumentsContract;
-import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
-import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -118,7 +116,6 @@ public class MainActivity extends Activity {
     private TextView step1Badge, step2Badge, step3Badge;
     private Button step1Btn, step2Btn, step3Btn, importBtn;
     private TextView selectedView;
-    private EditText prefixEdit;
     private TextView logView;
     private ScrollView logScroll;
     private LinearLayout logContainer;
@@ -145,7 +142,7 @@ public class MainActivity extends Activity {
         restoreSelected();
         refreshStateFlags();
 
-        log("=== 听书源导入器 v12.0（批量导入 + 重做按钮 + 新图标）===");
+        log("=== 听书源导入器 v12.1（批量导入 + 已去除文件名前缀输入）===");
         log("设备: " + Build.MANUFACTURER + " " + Build.MODEL
                 + " / Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")");
         log("目标: /storage/emulated/0/" + REL + "/");
@@ -302,18 +299,6 @@ public class MainActivity extends Activity {
         selectedView.setTypeface(Typeface.MONOSPACE);
         selectedView.setPadding(0, dp(6), 0, dp(2));
         s3.addView(selectedView);
-
-        TextView prefixLabel = new TextView(this);
-        prefixLabel.setText("文件名前缀（可选，留空则用原名；多个文件会加前缀便于区分）");
-        prefixLabel.setTextSize(11); prefixLabel.setTextColor(C_SUB);
-        prefixLabel.setPadding(0, dp(6), 0, dp(2));
-        s3.addView(prefixLabel);
-        prefixEdit = new EditText(this);
-        prefixEdit.setHint("例如 book_  →  得到 book_xxx.jar");
-        prefixEdit.setInputType(InputType.TYPE_CLASS_TEXT);
-        prefixEdit.setTextSize(14);
-        s3.addView(prefixEdit);
-        addHint(s3, "选完多个 jar 后点「导入」统一写入。成功请彻底重启「我的听书」让它扫描 jars/。");
         root.addView(s3);
 
         // 次级按钮行
@@ -996,14 +981,13 @@ public class MainActivity extends Activity {
             setStatus("✗ 未选择文件", 2);
             return;
         }
-        String prefix = prefixEdit.getText().toString().trim();
         int n = selectedUris.size();
         int ok = 0, fail = 0;
         for (int i = 0; i < n; i++) {
             Uri u = selectedUris.get(i);
             String base = selectedNames.get(i);
             if (base == null || base.isEmpty()) base = "source_" + (i + 1) + ".jar";
-            String target = prefix.isEmpty() ? base : (prefix + base);
+            String target = base;
             if (!target.toLowerCase(Locale.US).endsWith(".jar")) target = target + ".jar";
             log("[" + (i + 1) + "/" + n + "] " + base + " → " + target);
             byte[] data;
