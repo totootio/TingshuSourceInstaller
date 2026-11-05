@@ -27,7 +27,7 @@ sed "s/android:targetSdkVersion=\"[0-9]*\"/android:targetSdkVersion=\"$TARGET_SD
   -I "$ANDROID_JAR" \
   --manifest "$OUT/AndroidManifest.xml" \
   --min-sdk-version 26 --target-sdk-version "$TARGET_SDK" \
-  --version-code 10 --version-name 9.0 \
+  --version-code 11 --version-name 10.0 \
   --java "$OUT/gen"
 
 echo "[2/7] javac 编译 Java 源码（仅 framework API）"

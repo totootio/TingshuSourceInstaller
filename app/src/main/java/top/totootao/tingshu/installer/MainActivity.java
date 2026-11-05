@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -21,6 +22,7 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -37,13 +39,10 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * 听书源导入器 v9 —— 零宽字符 docId 的 SAF 授权。
+ * 听书源导入器 v10 —— 重做界面，三步引导式操作。
  *
  * 依据（lbchs5343/Android-FileExplorerDemo，2024-05-18 更新）：
- *   Android 13/14 上可用零宽字符插入 docId 来直接授权 Android/data：
- *     content://com.android.externalstorage.documents
- *       /tree/primary%3AA%E2%80%8Bndroid%2Fdata
- *       /document/primary%3AA%E2%80%8Bndroid%2Fdata
+ *   Android 13/14 上可用零宽字符插入 docId 来直接授权 Android/data。
  *   DocumentsUI 的字符串黑名单不认这个变体，「使用此文件夹」不再变灰；
  *   ExternalStorageProvider 归一化后仍映射到真实 Android/data。
  *
@@ -76,6 +75,24 @@ public class MainActivity extends Activity {
     private static final int CODE_TREE = 2;
     private static final int CODE_PICK = 3;
     private static final int CODE_LOG = 4;
+    private static final int CODE_REFRESH = 5;
+
+    private static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT;
+    private static final int WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
+    private static final int HORIZONTAL = LinearLayout.HORIZONTAL;
+
+    private static final int C_BG = Color.parseColor("#ECEFF1");
+    private static final int C_CARD = Color.WHITE;
+    private static final int C_TITLE = Color.parseColor("#263238");
+    private static final int C_SUB = Color.parseColor("#78909C");
+    private static final int C_TEXT = Color.parseColor("#37474F");
+    private static final int C_BLUE = Color.parseColor("#607D8B");
+    private static final int C_GREEN = Color.parseColor("#2E7D32");
+    private static final int C_ORANGE = Color.parseColor("#EF6C00");
+    private static final int C_RED = Color.parseColor("#C62828");
+    private static final int C_GRAY = Color.parseColor("#90A4AE");
+    private static final int C_TEAL = Color.parseColor("#00897B");
+    private static final int C_TEAL_BG = Color.parseColor("#E0F2F1");
 
     /** 零宽/可忽略码点，用于构造绕过 DocumentsUI 黑名单的 docId */
     private static final String[] IGN = {
@@ -96,15 +113,26 @@ public class MainActivity extends Activity {
 
     private SharedPreferences prefs;
     private TextView statusView;
+    private ProgressBar progressBar;
+    private TextView targetView;
+    private TextView step1Badge, step2Badge, step3Badge;
+    private Button step1Btn, step2Btn, step3Btn;
     private TextView logView;
-    private EditText nameEdit;
     private ScrollView logScroll;
+    private LinearLayout logContainer;
+    private TextView logHeader;
+    private EditText nameEdit;
     private final StringBuilder logBuf = new StringBuilder();
     private final SimpleDateFormat fmt = new SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault());
     private volatile boolean busy = false;
     private boolean suppressAuto = false;
     private volatile String lastSafDocId = null;
     private String cachedName = "sources_by_custom.jar";
+
+    // 引导状态
+    private boolean afOk = false;
+    private boolean treeOk = false;
+    private boolean jarOk = false;
 
     // ---------------------------------------------------------------- lifecycle
 
@@ -113,17 +141,18 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         prefs = getSharedPreferences(PREF, Context.MODE_PRIVATE);
         setContentView(buildUi());
+        refreshStateFlags();
 
-        log("=== 听书源导入器 v9.0（零宽 docId 授权）===");
+        log("=== 听书源导入器 v10.0（最简三步引导）===");
         log("设备: " + Build.MANUFACTURER + " " + Build.MODEL
                 + " / Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")");
         log("目标: /storage/emulated/0/" + REL + "/");
         log("");
-        log("① 所有文件访问权限已开就够；写不进再点②。");
-        log("② 本版用「零宽字符 docId」打开选择器，系统不会把它识别成");
-        log("   Android/data，『使用此文件夹』应当可以点。");
+        log("绝大多数机型：① 开权限 → ② 授权 → ③ 选 jar，即可导入。");
+        log("② 用「零宽字符 docId」打开选择器，系统不会把它识别成 Android/data，按钮可点。");
         log("不需要 Shizuku / root / 开发者选项 / 无线调试，也不会自动重启。");
         cleanupPendingRestart();
+        updateSteps();
     }
 
     @Override
@@ -149,70 +178,215 @@ public class MainActivity extends Activity {
         } catch (Throwable ignored) { }
     }
 
+    private void refreshStateFlags() {
+        afOk = hasAllFiles();
+        treeOk = savedTree() != null;
+        jarOk = prefs.getString(KEY_JAR, null) != null;
+    }
+
     // ---------------------------------------------------------------- UI
 
     private View buildUi() {
+        ScrollView rootScroll = new ScrollView(this);
+        rootScroll.setBackgroundColor(C_BG);
+        rootScroll.setFillViewport(true);
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.parseColor("#F5F5F5"));
-        int pad = dp(10);
+        int pad = dp(12);
         root.setPadding(pad, pad, pad, pad);
 
+        // 标题
+        TextView title = new TextView(this);
+        title.setText("听书源导入器");
+        title.setTextSize(20);
+        title.setTypeface(Typeface.defaultFromStyle(Typeface.BOLD));
+        title.setTextColor(C_TITLE);
+        root.addView(title);
+        TextView subtitle = new TextView(this);
+        subtitle.setText("把 jar 听书源导入「我的听书」");
+        subtitle.setTextSize(12);
+        subtitle.setTextColor(C_SUB);
+        subtitle.setPadding(0, dp(2), 0, dp(6));
+        root.addView(subtitle);
+
+        // 状态卡
         statusView = new TextView(this);
-        statusView.setTextSize(17);
+        statusView.setTextSize(16);
         statusView.setGravity(Gravity.CENTER);
-        statusView.setPadding(dp(10), dp(14), dp(10), dp(14));
+        statusView.setPadding(dp(14), dp(16), dp(14), dp(16));
         statusView.setTextColor(Color.WHITE);
-        statusView.setBackgroundColor(Color.parseColor("#607D8B"));
+        statusView.setBackgroundColor(C_BLUE);
         statusView.setText("正在检测…");
-        root.addView(statusView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(MATCH, WRAP);
+        root.addView(statusView, slp);
 
+        // 进度条
+        progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progressBar.setIndeterminate(true);
+        progressBar.setVisibility(View.GONE);
+        LinearLayout.LayoutParams pblp = new LinearLayout.LayoutParams(MATCH, WRAP);
+        pblp.topMargin = dp(6);
+        root.addView(progressBar, pblp);
+
+        // 目标目录卡
+        LinearLayout targetCard = card();
+        TextView tlabel = new TextView(this);
+        tlabel.setText("jar 将放入以下目录");
+        tlabel.setTextSize(11); tlabel.setTextColor(C_SUB);
+        targetView = new TextView(this);
+        targetView.setText("/storage/emulated/0/" + REL + "/");
+        targetView.setTextSize(12); targetView.setTextColor(C_TEXT);
+        targetView.setTypeface(Typeface.MONOSPACE);
+        targetView.setPadding(0, dp(4), 0, 0);
+        targetView.setTextIsSelectable(true);
+        targetCard.addView(tlabel); targetCard.addView(targetView);
+        root.addView(targetCard);
+
+        // 步骤一：所有文件访问权限
+        LinearLayout s1 = card();
+        LinearLayout s1row = new LinearLayout(this); s1row.setOrientation(HORIZONTAL);
+        TextView s1t = stepTitle("① 所有文件访问权限");
+        step1Badge = badge("请开启");
+        s1row.addView(s1t); s1row.addView(step1Badge);
+        step1Btn = primaryButton("去开启权限", CODE_ALLFILES, false);
+        s1.addView(s1row); s1.addView(step1Btn);
+        addHint(s1, "设置里打开「所有文件访问权限」开关后返回即可。");
+        root.addView(s1);
+
+        // 步骤二：授权 Android/data
+        LinearLayout s2 = card();
+        LinearLayout s2row = new LinearLayout(this); s2row.setOrientation(HORIZONTAL);
+        TextView s2t = stepTitle("② 授权 Android/data");
+        step2Badge = badge("待授权");
+        s2row.addView(s2t); s2row.addView(step2Badge);
+        step2Btn = primaryButton("一键授权（灰了就再点换变体）", CODE_TREE, false);
+        s2.addView(s2row); s2.addView(step2Btn);
+        addHint(s2, "选择器里选 Android/data，点「使用此文件夹」→「允许」。若仍灰，返回再点一次会自动换下一个变体。");
+        root.addView(s2);
+
+        // 步骤三：选择并导入（重点突出）
+        LinearLayout s3 = card();
+        s3.setBackgroundColor(C_TEAL_BG);
+        LinearLayout s3row = new LinearLayout(this); s3row.setOrientation(HORIZONTAL);
+        TextView s3t = stepTitle("③ 选择 jar 并导入");
+        step3Badge = badge("待选择");
+        s3row.addView(s3t); s3row.addView(step3Badge);
+        step3Btn = primaryButton("选择 jar 文件", CODE_PICK, true);
+        s3.addView(s3row); s3.addView(step3Btn);
         TextView nameLabel = new TextView(this);
-        nameLabel.setText("导入后的文件名（选完 jar 会自动填入）:");
-        nameLabel.setTextSize(12);
-        nameLabel.setTextColor(Color.parseColor("#444444"));
-        nameLabel.setPadding(0, dp(8), 0, 0);
-        root.addView(nameLabel);
-
+        nameLabel.setText("导入后的文件名（选完自动填入，可改）");
+        nameLabel.setTextSize(11); nameLabel.setTextColor(C_SUB);
+        nameLabel.setPadding(0, dp(8), 0, dp(2));
+        s3.addView(nameLabel);
         nameEdit = new EditText(this);
         nameEdit.setText(cachedName);
         nameEdit.setInputType(InputType.TYPE_CLASS_TEXT);
         nameEdit.setTextSize(14);
-        root.addView(nameEdit, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        s3.addView(nameEdit);
+        addHint(s3, "选完 jar 会自动写入目标目录。成功请彻底重启「我的听书」让它扫描 jars/。");
+        root.addView(s3);
 
-        LinearLayout btns = new LinearLayout(this);
-        btns.setOrientation(LinearLayout.VERTICAL);
-        btns.addView(button("① 开启『所有文件访问权限』", CODE_ALLFILES));
-        btns.addView(button("② 一键授权（零宽 URI，灰了就再点换变体）", CODE_TREE));
-        btns.addView(button("③ 选择 jar（选完自动导入）", CODE_PICK));
-        btns.addView(button("④ 复制日志", CODE_LOG));
-        root.addView(btns);
+        // 次级按钮行
+        LinearLayout secRow = new LinearLayout(this); secRow.setOrientation(HORIZONTAL);
+        LinearLayout.LayoutParams srLp = new LinearLayout.LayoutParams(0, WRAP, 1f);
+        srLp.topMargin = dp(10);
+        Button bRefresh = secondaryButton("重新检测", CODE_REFRESH);
+        Button bLog = secondaryButton("复制日志", CODE_LOG);
+        secRow.addView(bRefresh, srLp);
+        LinearLayout.LayoutParams srLp2 = new LinearLayout.LayoutParams(0, WRAP, 1f);
+        srLp2.topMargin = dp(10); srLp2.leftMargin = dp(8);
+        secRow.addView(bLog, srLp2);
+        root.addView(secRow);
 
+        // 诊断日志（可折叠）
+        logHeader = new TextView(this);
+        logHeader.setText("诊断日志 ▼  点我展开/收起");
+        logHeader.setTextSize(13);
+        logHeader.setTextColor(C_TEAL);
+        logHeader.setPadding(0, dp(12), 0, dp(4));
+        logHeader.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                boolean vis = logContainer.getVisibility() == View.VISIBLE;
+                logContainer.setVisibility(vis ? View.GONE : View.VISIBLE);
+                logHeader.setText(vis ? "诊断日志 ▼  点我展开/收起" : "诊断日志 ▲  点我展开/收起");
+            }
+        });
+        root.addView(logHeader);
+
+        logContainer = new LinearLayout(this);
+        logContainer.setOrientation(LinearLayout.VERTICAL);
         logScroll = new ScrollView(this);
-        logScroll.setBackgroundColor(Color.parseColor("#1E1E1E"));
+        logScroll.setBackgroundColor(Color.parseColor("#212121"));
         logView = new TextView(this);
         logView.setTextSize(11);
         logView.setTextColor(Color.parseColor("#D6D6D6"));
         logView.setPadding(dp(8), dp(8), dp(8), dp(8));
-        logView.setTypeface(android.graphics.Typeface.MONOSPACE);
+        logView.setTypeface(Typeface.MONOSPACE);
         logScroll.addView(logView);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
-        lp.topMargin = dp(8);
-        root.addView(logScroll, lp);
-        return root;
+        logContainer.addView(logScroll);
+        LinearLayout.LayoutParams lclp = new LinearLayout.LayoutParams(MATCH, dp(170));
+        lclp.topMargin = dp(2);
+        logContainer.setLayoutParams(lclp);
+        logContainer.setVisibility(View.GONE);
+        root.addView(logContainer);
+
+        rootScroll.addView(root);
+        return rootScroll;
     }
 
-    private Button button(String text, final int code) {
+    // ---- UI 小构件 ----
+    private LinearLayout card() {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setBackgroundColor(C_CARD);
+        int p = dp(12); c.setPadding(p, p, p, p);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(MATCH, WRAP);
+        lp.topMargin = dp(8);
+        c.setLayoutParams(lp);
+        return c;
+    }
+
+    private TextView stepTitle(String t) {
+        TextView v = new TextView(this);
+        v.setText(t); v.setTextSize(15);
+        v.setTypeface(Typeface.defaultFromStyle(Typeface.BOLD));
+        v.setTextColor(C_TITLE);
+        v.setLayoutParams(new LinearLayout.LayoutParams(0, WRAP, 1f));
+        return v;
+    }
+
+    private TextView badge(String t) {
+        TextView b = new TextView(this);
+        b.setText(t); b.setTextSize(12);
+        b.setPadding(dp(8), dp(3), dp(8), dp(3));
+        b.setTextColor(Color.WHITE); b.setBackgroundColor(C_GRAY);
+        return b;
+    }
+
+    private void setBadge(TextView b, String t, int color) {
+        b.setText(t); b.setBackgroundColor(color);
+    }
+
+    private void addHint(LinearLayout card, String text) {
+        TextView h = new TextView(this);
+        h.setText(text);
+        h.setTextSize(11); h.setTextColor(C_SUB);
+        h.setPadding(0, dp(6), 0, 0);
+        card.addView(h);
+    }
+
+    private Button primaryButton(String text, final int code, boolean strong) {
         Button b = new Button(this);
         b.setText(text);
         b.setAllCaps(false);
-        b.setTextSize(13);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(3);
+        b.setTextSize(strong ? 16 : 14);
+        b.setMinHeight(dp(48));
+        b.setPadding(dp(10), dp(4), dp(10), dp(4));
+        b.setBackgroundColor(strong ? C_TEAL : C_BLUE);
+        b.setTextColor(Color.WHITE);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(MATCH, WRAP);
+        lp.topMargin = dp(8);
         b.setLayoutParams(lp);
         b.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { dispatch(code); }
@@ -220,14 +394,43 @@ public class MainActivity extends Activity {
         return b;
     }
 
+    private Button secondaryButton(String text, final int code) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextSize(13);
+        b.setMinHeight(dp(42));
+        b.setBackgroundColor(Color.parseColor("#CFD8DC"));
+        b.setTextColor(C_TITLE);
+        b.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { dispatch(code); }
+        });
+        return b;
+    }
+
+    private void updateSteps() {
+        runOnUiThread(new Runnable() {
+            @Override public void run() {
+                setBadge(step1Badge, afOk ? "✓ 已开启" : "请开启",
+                        afOk ? C_GREEN : C_ORANGE);
+                if (treeOk) setBadge(step2Badge, "✓ 已授权", C_GREEN);
+                else if (afOk) setBadge(step2Badge, "需要授权", C_ORANGE);
+                else setBadge(step2Badge, "先开①", C_GRAY);
+                setBadge(step3Badge, jarOk ? "✓ 已选" : "待选择",
+                        jarOk ? C_GREEN : C_GRAY);
+            }
+        });
+    }
+
     private void dispatch(final int code) {
-        if (busy && code != CODE_LOG) { toast("正在执行，请稍候"); return; }
+        if (busy && code != CODE_LOG && code != CODE_REFRESH) { toast("正在执行，请稍候"); return; }
         cachedName = nameEdit.getText().toString().trim();
         if (cachedName.length() == 0) cachedName = "sources_by_custom.jar";
         switch (code) {
             case CODE_ALLFILES: openAllFilesSettings(); break;
             case CODE_TREE:     requestTree(); break;
             case CODE_PICK:     pickJar(); break;
+            case CODE_REFRESH:  run(new Runnable() { @Override public void run() { auto(); } }); break;
             case CODE_LOG:
                 ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
                 cm.setPrimaryClip(ClipData.newPlainText("ts9-log", logBuf.toString()));
@@ -302,10 +505,12 @@ public class MainActivity extends Activity {
                         Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
             } catch (Throwable t) { log("!! 持久化授权失败: " + t); }
             prefs.edit().putString(KEY_TREE, tree.toString()).apply();
+            treeOk = true;
             log("✓ 已授权: " + tree);
             try {
                 log("  tree docId: " + show(DocumentsContract.getTreeDocumentId(tree)));
             } catch (Throwable ignored) { }
+            updateSteps();
             run(new Runnable() { @Override public void run() { auto(); } });
             return;
         }
@@ -324,7 +529,9 @@ public class MainActivity extends Activity {
                 cachedName = n;
                 nameEdit.setText(n);
             }
+            jarOk = true;
             log("已选择 jar: " + (n == null ? u.toString() : n));
+            updateSteps();
             run(new Runnable() { @Override public void run() { doImport(); } });
         }
     }
@@ -375,11 +582,17 @@ public class MainActivity extends Activity {
         runOnUiThread(new Runnable() {
             @Override public void run() {
                 statusView.setText(s);
-                statusView.setBackgroundColor(kind == 1 ? Color.parseColor("#2E7D32")
-                        : kind == 2 ? Color.parseColor("#C62828")
-                        : kind == 3 ? Color.parseColor("#EF6C00")
-                        : Color.parseColor("#607D8B"));
+                statusView.setBackgroundColor(kind == 1 ? C_GREEN
+                        : kind == 2 ? C_RED
+                        : kind == 3 ? C_ORANGE
+                        : C_BLUE);
             }
+        });
+    }
+
+    private void setBusy(final boolean b) {
+        runOnUiThread(new Runnable() {
+            @Override public void run() { progressBar.setVisibility(b ? View.VISIBLE : View.GONE); }
         });
     }
 
@@ -391,11 +604,12 @@ public class MainActivity extends Activity {
 
     private void run(final Runnable r) {
         busy = true;
+        setBusy(true);
         new Thread(new Runnable() {
             @Override public void run() {
                 try { r.run(); }
                 catch (Throwable t) { log("!! 线程异常: " + t); }
-                finally { busy = false; }
+                finally { busy = false; setBusy(false); }
             }
         }, "ts9-work").start();
     }
@@ -607,13 +821,16 @@ public class MainActivity extends Activity {
 
     private void auto() {
         setStatus("正在检测…", 0);
+        refreshStateFlags();
         log("");
         log("=== 自动检测 ===");
         boolean af = hasAllFiles();
+        afOk = af;
         log("① 所有文件访问权限: " + (af ? "已开启 ✓" : "未开启 ✗"));
         if (!af) {
             log("   点① → 设置里打开开关 → 返回即可");
             setStatus("请点①开启『所有文件访问权限』", 3);
+            updateSteps();
             return;
         }
 
@@ -621,6 +838,7 @@ public class MainActivity extends Activity {
         if (e0 == null) {
             log("② ContentResolver 直连: 可用 ✓（无需任何授权框）");
             setStatus("✓ 可写入 → 点③选 jar 即自动导入", 1);
+            updateSteps();
             return;
         }
         log("② ContentResolver 直连: " + e0);
@@ -629,20 +847,24 @@ public class MainActivity extends Activity {
         if (e1 == null) {
             log("③ 真实路径直写: 可用 ✓");
             setStatus("✓ 可写入 → 点③选 jar 即自动导入", 1);
+            updateSteps();
             return;
         }
         log("③ 真实路径直写: 不可用 (" + e1 + ")");
 
         Uri tree = savedTree();
         if (tree != null) {
+            treeOk = true;
             String e2 = probeSaf(tree);
             if (e2 == null) {
                 log("④ 目录授权写入: 可用 ✓");
                 setStatus("✓ 可写入 → 点③选 jar 即自动导入", 1);
+                updateSteps();
                 return;
             }
             log("④ 目录授权写入: 不可用 (" + e2 + ")");
         } else {
+            treeOk = false;
             log("④ 目录授权: 尚未授权");
         }
 
@@ -650,6 +872,7 @@ public class MainActivity extends Activity {
         if (e3 == null) {
             log("⑤ 零宽路径写入: 可用 ✓");
             setStatus("✓ 可写入 → 点③选 jar 即自动导入", 1);
+            updateSteps();
             return;
         }
         log("⑤ 零宽路径写入: 不可用 (" + e3 + ")");
@@ -658,6 +881,7 @@ public class MainActivity extends Activity {
         log("=> 点②【一键授权】：用零宽 docId 打开选择器，按钮应当可点。");
         log("   选好后点『使用此文件夹』→『允许』。若仍灰，返回再点②换变体。");
         setStatus("请点②授权（零宽 URI）", 3);
+        updateSteps();
     }
 
     private void doImport() {
